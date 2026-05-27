@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fontem-currency-loader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: fontem-currency-loader
+    component: cron
+spec:
+  # Daily at 02:30 UTC — ECB publishes the day's reference rate around
+  # 16:00 CET on each business day; running early the next day gives
+  # the previous day's rate plenty of time to land.
+  schedule: {{ .Values.loader.schedule | default "30 2 * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.loader.deadlineSeconds | default 1800 }}
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: fontem-currency-loader
+            component: cron
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: regcred
+          volumes:
+            - name: rates
+              persistentVolumeClaim:
+                claimName: fontem-currency-rates
+          containers:
+            - name: loader
+              image: contribute.void42.internal/fontem/fontem-currency:{{ .Values.version }}
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  python -m src.loader.load
+                  # Tell the running API to reload its in-memory rate
+                  # cache. Best-effort: a missed reload just delays
+                  # the new rates by one rollover (next pod restart),
+                  # so we don't fail the cron on a flake.
+                  if [ -n "${RELOAD_TOKEN:-}" ]; then
+                    curl -fsS -m 10 \
+                      -X POST \
+                      -H "X-Reload-Token: ${RELOAD_TOKEN}" \
+                      http://fontem-currency/v1/reload \
+                      || echo "reload ping failed (non-fatal)"
+                  fi
+              env:
+                - name: CURRENCY_DATA_DIR
+                  value: /srv/currency-data
+                - name: RELOAD_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: fontem-currency-reload-token
+                      key: token
+                      optional: true
+              volumeMounts:
+                - name: rates
+                  mountPath: /srv/currency-data
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits:   {cpu: 1,    memory: 1Gi}

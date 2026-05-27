@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fontem-currency
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: fontem-currency
+  template:
+    metadata:
+      labels:
+        app: fontem-currency
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      volumes:
+        - name: rates
+          persistentVolumeClaim:
+            claimName: fontem-currency-rates
+      containers:
+        - name: api
+          image: contribute.void42.internal/fontem/fontem-currency:{{ .Values.version }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CURRENCY_DATA_DIR
+              value: /srv/currency-data
+            # Reload token gates POST /v1/reload — the loader cronjob
+            # uses the same Vault secret to authenticate its post-refresh
+            # ping so the API doesn't have to be restarted to pick up
+            # the new rate JSONs.
+            - name: RELOAD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fontem-currency-reload-token
+                  key: token
+                  optional: true
+          volumeMounts:
+            - name: rates
+              mountPath: /srv/currency-data
+          # readyz waits for the loader to have populated the PVC at
+          # least once. liveness is healthz which is always 200 unless
+          # the python process itself is wedged.
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8080}
+            periodSeconds: 10
+            failureThreshold: 3
+            # Generous initialDelay so the first pod start doesn't get
+            # restarted before the loader cronjob has had a chance to
+            # populate the PVC. After the first successful loader run
+            # the rates persist on the PVC across restarts.
+            initialDelaySeconds: 30
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits:   {cpu: 500m, memory: 512Mi}

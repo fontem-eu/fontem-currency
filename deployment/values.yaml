@@ -1,0 +1,12 @@
+version: "dev"
+replicas: 1
+
+storage:
+  size: 2Gi
+  # Per-env overrides set storageClassName and/or volumeName when the
+  # cluster wants to pin to NFS or a specific PV. Default leaves it
+  # blank → cluster default storage class.
+
+loader:
+  schedule: "30 2 * * *"
+  deadlineSeconds: 1800

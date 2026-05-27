@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fontem-currency-rates
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes:
+    # RWX so the loader cronjob pod and the api deployment pod can
+    # both mount it — the cron writes, the api reads.
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.storage.size | default "2Gi" }}
+  {{- if .Values.storage.storageClassName }}
+  storageClassName: {{ .Values.storage.storageClassName | quote }}
+  {{- end }}
+  {{- if .Values.storage.volumeName }}
+  volumeName: {{ .Values.storage.volumeName | quote }}
+  {{- end }}
