@@ -11,7 +11,16 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.size | default "2Gi" }}
-  {{- if .Values.storage.storageClassName }}
+  # storageClassName MUST be emitted even when empty — Kubernetes
+  # treats "explicit empty string" and "absent field" differently.
+  # Empty string skips dynamic provisioning and lets the static PV
+  # binding succeed (matching the class-less NFS PV we declare in
+  # gitops/infra/currency-service.yaml). Absent field falls back to
+  # the cluster's default StorageClass (local-path here), which
+  # confuses operators reading the manifest ("why does this say
+  # local-path when the data is on NFS?") even though the explicit
+  # volumeName still steers binding to the right PV.
+  {{- if hasKey .Values.storage "storageClassName" }}
   storageClassName: {{ .Values.storage.storageClassName | quote }}
   {{- end }}
   {{- if .Values.storage.volumeName }}

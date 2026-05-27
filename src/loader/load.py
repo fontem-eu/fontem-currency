@@ -42,9 +42,16 @@ ECB_CURRENCIES = [
     "HRK",
 ]
 
-# Currencies needed by TED / fontem data but NOT in ECB. Frankfurter
-# (free, no auth, daily rates back to 2000) covers them.
-NON_ECB_CURRENCIES = [
+# Currencies that consumers (TED, etc.) sometimes need but ECB
+# doesn't publish. We don't have a free no-auth source that covers
+# them — Frankfurter ALSO only mirrors the ECB list (verified via
+# its /currencies endpoint: 30 codes, same as ECB), and
+# exchangerate.host now requires an API key. Leaving the list here
+# as documentation of what consumers will see `null` for; until we
+# wire up a paid source (Open Exchange Rates, currencyapi, etc.)
+# or stand up our own static fixture, these contracts get no EUR
+# conversion and downstream queries should treat them as such.
+NON_ECB_CURRENCIES_UNSUPPORTED = [
     "MDL", "MKD", "UAH", "RSD", "BAM", "MAD", "TND", "AMD",
     "AWG", "GEL", "ALL", "DZD", "EGP", "ARS", "RUB",
 ]
@@ -53,7 +60,13 @@ ECB_URL = (
     "https://data-api.ecb.europa.eu/service/data/EXR/D.{ccy}.EUR.SP00.A"
     "?startPeriod={start}&endPeriod={end}&format=csvdata"
 )
-FRANKFURTER_URL = "https://api.frankfurter.app/{start}..{end}?from=EUR&to={ccy}"
+# api.frankfurter.app permanently 301's to api.frankfurter.dev/v1/.
+# Hitting the new URL directly cuts every request from 2 hops to 1
+# and avoids the failure mode where httpx follows the redirect into
+# a path-rewrite that breaks one specific shape of query string.
+FRANKFURTER_URL = (
+    "https://api.frankfurter.dev/v1/{start}..{end}?from=EUR&to={ccy}"
+)
 
 CONTACT_EMAIL = "team@fontem.eu"
 HTTP_HEADERS = {
@@ -164,20 +177,31 @@ def load_all(
     end: str | None = None,
     currencies: list[str] | None = None,
 ) -> dict:
-    """Refresh every currency: ECB primary, Frankfurter fallback."""
+    """Refresh every supported currency from ECB.
+
+    Frankfurter is kept as a per-currency fallback in case ECB has a
+    transient gap (it mirrors ECB so coverage is identical, just
+    served from a different CDN). The unsupported list logs a single
+    summary line; nothing is fetched for those.
+    """
     rates_dir = Path(rates_dir)
     if end is None:
         end = date.today().isoformat()
 
     if currencies is None:
         ecb_list = list(ECB_CURRENCIES)
-        non_ecb_list = list(NON_ECB_CURRENCIES)
     else:
         ecb_list = [c for c in currencies if c in ECB_CURRENCIES]
-        non_ecb_list = [c for c in currencies if c not in ECB_CURRENCIES]
+        unsupported = [c for c in currencies if c not in ECB_CURRENCIES]
+        if unsupported:
+            logger.warning(
+                "no free source for currencies %s — skipping (see "
+                "NON_ECB_CURRENCIES_UNSUPPORTED comment)",
+                unsupported,
+            )
 
-    logger.info("Loading %d ECB + %d non-ECB currencies (%s to %s)",
-                len(ecb_list), len(non_ecb_list), start, end)
+    logger.info("Loading %d currencies from ECB (%s to %s)",
+                len(ecb_list), start, end)
 
     summary = {"ccy_loaded": 0, "ccy_unchanged": 0, "ccy_failed": 0}
 
@@ -188,17 +212,9 @@ def load_all(
             summary["ccy_unchanged"] += 1
             continue
         if not daily:
-            logger.warning("  %s: ECB returned no data, trying Frankfurter", ccy)
+            logger.warning("  %s: ECB returned no data, trying Frankfurter",
+                           ccy)
             daily = fetch_frankfurter(ccy, start, end)
-        if daily:
-            save_currency_file(rates_dir, ccy, daily)
-            summary["ccy_loaded"] += 1
-        else:
-            summary["ccy_failed"] += 1
-
-    for ccy in non_ecb_list:
-        logger.info("Fetching %s from Frankfurter...", ccy)
-        daily = fetch_frankfurter(ccy, start, end)
         if daily:
             save_currency_file(rates_dir, ccy, daily)
             summary["ccy_loaded"] += 1
@@ -210,7 +226,7 @@ def load_all(
         "start_period": start,
         "end_period": end,
         "ecb_currencies": ecb_list,
-        "non_ecb_currencies": non_ecb_list,
+        "unsupported_currencies": NON_ECB_CURRENCIES_UNSUPPORTED,
         "sources": ["ecb", "frankfurter"],
     }
     with open(rates_dir / "metadata.json", "w", encoding="utf-8") as f:
