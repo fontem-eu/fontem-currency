@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.loader import load as loader_mod
 
 
@@ -85,3 +87,43 @@ def test_load_all_writes_metadata_with_period(tmp_path, monkeypatch):
     assert meta["start_period"] == "2024-01-01"
     assert meta["end_period"] == "2024-01-31"
     assert meta["ecb_currencies"] == ["USD"]
+
+
+def test_frankfurter_url_targets_new_dev_endpoint():
+    """api.frankfurter.app permanently 301's to api.frankfurter.dev/v1/.
+    Calling .app first costs every request an extra round-trip and
+    historically broke when followed (the path rewrite confused
+    httpx for one URL shape). Pin the constant to the canonical
+    /v1 endpoint so we never see that path again.
+    """
+    assert "api.frankfurter.dev/v1/" in loader_mod.FRANKFURTER_URL
+    assert "api.frankfurter.app" not in loader_mod.FRANKFURTER_URL
+
+
+def test_unsupported_non_ecb_currencies_are_skipped(tmp_path, monkeypatch):
+    """The 15 currencies in NON_ECB_CURRENCIES_UNSUPPORTED don't have
+    a free no-auth source today (Frankfurter mirrors ECB; exchangerate.host
+    requires an API key). load_all must NOT try Frankfurter for them —
+    it should log a single warning and move on.
+    """
+    fetch_calls: list[str] = []
+
+    def fake_fetch(ccy, *_a, **_kw):
+        fetch_calls.append(ccy)
+        return {"2024-01-02": "1.10"} if ccy in loader_mod.ECB_CURRENCIES else {}
+
+    monkeypatch.setattr(loader_mod, "fetch_ecb", fake_fetch)
+    monkeypatch.setattr(
+        loader_mod, "fetch_frankfurter",
+        lambda *a, **kw: pytest.fail("must not call Frankfurter for unsupported"),
+    )
+    summary = loader_mod.load_all(
+        tmp_path, start="2024-01-01", end="2024-01-31",
+        currencies=["USD", "MDL", "UAH"],   # 1 ECB + 2 unsupported
+    )
+    # Only the ECB currency was attempted; MDL + UAH skipped.
+    assert fetch_calls == ["USD"]
+    assert summary["ccy_loaded"] == 1
+    meta = json.loads((tmp_path / "metadata.json").read_text())
+    assert "MDL" in meta["unsupported_currencies"]
+    assert "UAH" in meta["unsupported_currencies"]
