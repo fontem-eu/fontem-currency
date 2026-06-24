@@ -20,6 +20,11 @@ spec:
       backoffLimit: 1
       template:
         metadata:
+          annotations:
+            # Batch Job: don't inject the linkerd sidecar. It never exits when
+            # the loader finishes, so the Job hangs to activeDeadlineSeconds
+            # and is marked Failed even though the load succeeded.
+            linkerd.io/inject: "disabled"
           labels:
             app: fontem-currency-loader
             component: cron
