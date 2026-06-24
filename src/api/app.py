@@ -31,9 +31,10 @@ it finishes a refresh (token-gated; see the deployment manifest).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from datetime import date as date_t
+from datetime import date as date_t, timedelta
 from decimal import Decimal
 from pathlib import Path
 from threading import RLock
@@ -146,18 +147,53 @@ def healthz() -> dict:
     return {"ok": True}
 
 
+def _rate_date_bounds(rates_subdir) -> tuple[str | None, str | None]:
+    """(earliest, latest) ISO date across a representative rate file. USD is
+    ECB-published daily since 2000, so it is the canonical coverage probe;
+    reading one file keeps readyz cheap."""
+    probe = rates_subdir / "USD.json"
+    if not probe.exists():
+        cand = sorted(rates_subdir.glob("*.json"))
+        if not cand:
+            return None, None
+        probe = cand[0]
+    try:
+        with open(probe, encoding="utf-8") as f:
+            d = json.load(f)
+        return (min(d), max(d)) if d else (None, None)
+    except (ValueError, OSError):
+        return None, None
+
+
 @app.get("/readyz")
 def readyz() -> dict:
     # Readyz waits for the loader to have populated at least one
-    # daily-rate file. Without that, /convert calls would fall
-    # straight through to "unknown" for every non-EUR currency.
+    # daily-rate file, AND validates coverage: the latest rate must be
+    # recent (the daily cron is alive) and history must reach back to 2000.
     rates_subdir = RATES_DIR / "rates"
-    if not rates_subdir.exists() or not any(rates_subdir.glob("*.json")):
+    files = list(rates_subdir.glob("*.json")) if rates_subdir.exists() else []
+    if not files:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="no daily rates loaded yet (cronjob hasn't run?)",
         )
-    return {"ok": True, "currencies": len(list(rates_subdir.glob("*.json")))}
+    earliest, latest = _rate_date_bounds(rates_subdir)
+    # 10-day grace: weekends/holidays have no ECB print; >10 days means the
+    # loader cron is genuinely failing — trip readiness so it surfaces.
+    cutoff = (date_t.today() - timedelta(days=10)).isoformat()
+    if latest is None or latest < cutoff:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"FX rates stale (latest={latest}, cutoff={cutoff}) — "
+                   "daily currency-loader cron failing?",
+        )
+    return {
+        "ok": True,
+        "currencies": len(files),
+        "latest": latest,
+        "earliest": earliest,
+        "history_since_2000": bool(earliest and earliest <= "2000-12-31"),
+    }
 
 
 @app.post("/v1/parse", response_model=ParseResponse)

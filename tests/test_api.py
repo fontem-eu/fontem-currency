@@ -1,5 +1,7 @@
 """Tests for the FastAPI surface."""
 import json
+from datetime import date as _date, timedelta as _timedelta
+from importlib import reload
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -8,7 +10,8 @@ from fastapi.testclient import TestClient
 def _seed_pvc(tmp_path: Path) -> Path:
     rates = tmp_path / "rates"
     rates.mkdir()
-    (rates / "USD.json").write_text(json.dumps({"2024-01-02": "1.10"}))
+    (rates / "USD.json").write_text(json.dumps(
+        {"2000-01-03": "1.00", "2024-01-02": "1.10", _date.today().isoformat(): "1.10"}))
     return tmp_path
 
 
@@ -17,7 +20,6 @@ def _client(monkeypatch, tmp_path):
     monkeypatch.setenv("CURRENCY_DATA_DIR", str(pvc))
     monkeypatch.setenv("RELOAD_TOKEN", "test-token")
     # Re-import so the env vars stick + the _holder is fresh.
-    from importlib import reload  # pylint: disable=import-outside-toplevel
     import src.api.app as app_mod  # pylint: disable=import-outside-toplevel
     reload(app_mod)
     return TestClient(app_mod.app), app_mod
@@ -30,7 +32,6 @@ def test_healthz_is_always_ok(monkeypatch, tmp_path):
 
 def test_readyz_503_until_pvc_populated(monkeypatch, tmp_path):
     monkeypatch.setenv("CURRENCY_DATA_DIR", str(tmp_path))  # no rates/
-    from importlib import reload  # pylint: disable=import-outside-toplevel
     import src.api.app as app_mod  # pylint: disable=import-outside-toplevel
     reload(app_mod)
     client = TestClient(app_mod.app)
@@ -42,6 +43,20 @@ def test_readyz_200_once_pvc_has_rates(monkeypatch, tmp_path):
     r = client.get("/readyz")
     assert r.status_code == 200
     assert r.json()["currencies"] >= 1
+    assert r.json()["history_since_2000"] is True
+
+
+def test_readyz_503_when_rates_stale(monkeypatch, tmp_path):
+    rates = tmp_path / "rates"
+    rates.mkdir()
+    old = (_date.today() - _timedelta(days=30)).isoformat()
+    (rates / "USD.json").write_text(json.dumps({"2000-01-03": "1.0", old: "1.1"}))
+    monkeypatch.setenv("CURRENCY_DATA_DIR", str(tmp_path))
+    import src.api.app as app_mod  # pylint: disable=import-outside-toplevel
+    reload(app_mod)
+    r = TestClient(app_mod.app).get("/readyz")
+    assert r.status_code == 503
+    assert "stale" in r.json()["detail"]
 
 
 def test_parse_sentinel(monkeypatch, tmp_path):
