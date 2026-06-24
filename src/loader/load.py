@@ -171,6 +171,21 @@ def save_currency_file(rates_dir: Path, ccy: str, daily: dict[str, str]) -> None
                 max(daily) if daily else "—")
 
 
+def _last_local_date(rates_dir: Path, ccy: str) -> str | None:
+    """The most recent date already stored for ``ccy`` (ISO string), or
+    None if we have no file yet. Used to fetch incrementally instead of
+    re-pulling the full 2000-today history on every run."""
+    path = _local_rates_path(rates_dir, ccy)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return max(data) if data else None
+    except (ValueError, OSError):
+        return None
+
+
 def load_all(
     rates_dir: str | Path,
     start: str = "2000-01-01",
@@ -206,17 +221,31 @@ def load_all(
     summary = {"ccy_loaded": 0, "ccy_unchanged": 0, "ccy_failed": 0}
 
     for ccy in ecb_list:
-        logger.info("Fetching %s from ECB...", ccy)
-        daily = fetch_ecb(ccy, start, end, rates_dir=rates_dir)
+        # Incremental: pull from the last date we already hold (re-fetching
+        # that day is cheap and covers ECB late-revisions) through today.
+        # First-ever load (no file) falls back to the global `start` floor.
+        ccy_start = _last_local_date(rates_dir, ccy) or start
+        logger.info("Fetching %s from ECB (%s to %s)...", ccy, ccy_start, end)
+        daily = fetch_ecb(ccy, ccy_start, end, rates_dir=rates_dir)
         if daily is None:
             summary["ccy_unchanged"] += 1
             continue
         if not daily:
             logger.warning("  %s: ECB returned no data, trying Frankfurter",
                            ccy)
-            daily = fetch_frankfurter(ccy, start, end)
+            daily = fetch_frankfurter(ccy, ccy_start, end)
         if daily:
-            save_currency_file(rates_dir, ccy, daily)
+            # Merge onto the existing file so we never drop earlier history.
+            merged: dict[str, str] = {}
+            existing = _local_rates_path(rates_dir, ccy)
+            if existing.exists():
+                try:
+                    with open(existing, encoding="utf-8") as f:
+                        merged = json.load(f)
+                except (ValueError, OSError):
+                    merged = {}
+            merged.update(daily)
+            save_currency_file(rates_dir, ccy, merged)
             summary["ccy_loaded"] += 1
         else:
             summary["ccy_failed"] += 1
