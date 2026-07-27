@@ -1,3 +1,13 @@
+> ### 🪞 This GitHub repository is a mirror
+>
+> Development happens on Fontem's own infrastructure; this mirror is
+> updated automatically. **Issues and pull requests opened here are not
+> monitored.**
+>
+> If you would like to contribute — code, data sources, review, or
+> anything else — please get in touch at **team@fontem.eu** and we will
+> set you up.
+
 # fontem-currency
 
 Currency reference + EUR conversion service. **Singleton — one deployment in the `currency-service` namespace serves every environment** (testing / staging / dast / prod) over cluster DNS. Mirrors the `fontem-linguistics` posture: non-critical, offline data sources, cluster-internal only.
@@ -69,3 +79,7 @@ CURRENCY_DATA_DIR=/tmp/currency-data uvicorn src.api.app:app --reload
 # Local loader (one-shot refresh of all currencies; takes ~2 min over WAN)
 python -m src.loader.load --rates-dir /tmp/currency-data --start 2024-01-01
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
