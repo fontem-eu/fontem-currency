@@ -39,6 +39,11 @@ jobs:
           echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login gitea-http.dev-tools.svc.cluster.local:3000 -u "${{ secrets.REGISTRY_USER }}" --password-stdin
           docker build --network host -t gitea-http.dev-tools.svc.cluster.local:3000/fontem/fontem-currency:$TAG .
           docker push gitea-http.dev-tools.svc.cluster.local:3000/fontem/fontem-currency:$TAG
+          # Signed and attested by digest, never by tag: a tag can be
+          # re-pointed after signing.
+          DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "gitea-http.dev-tools.svc.cluster.local:3000/fontem/fontem-currency:$TAG" | grep -oE 'sha256:[0-9a-f]{64}' | head -1 || true)
+          [ -n "$DIGEST" ] || { echo "::error::could not resolve the pushed digest for fontem-currency:$TAG"; exit 1; }
+          echo "DIGEST=$DIGEST" >> $GITHUB_ENV
       - name: Sign image with Cosign
         env:
           COSIGN_PASSWORD: ""
@@ -47,5 +52,7 @@ jobs:
           curl -sL https://nexus.void42.internal/repository/github-releases/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64 -o /usr/local/bin/cosign
           chmod +x /usr/local/bin/cosign
           echo "$COSIGN_KEY" > /tmp/cosign.key
-          cosign sign --key /tmp/cosign.key --yes --allow-http-registry gitea-http.dev-tools.svc.cluster.local:3000/fontem/fontem-currency:$TAG
+          # --tlog-upload=false: the image is private; nothing goes to the
+          # public Rekor log (the cluster verifies with ignoreTlog).
+          cosign sign --tlog-upload=false --key /tmp/cosign.key --yes --allow-http-registry "gitea-http.dev-tools.svc.cluster.local:3000/fontem/fontem-currency@$DIGEST"
           rm /tmp/cosign.key
