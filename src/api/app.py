@@ -37,6 +37,7 @@ import os
 from datetime import date as date_t, timedelta
 from decimal import Decimal
 from pathlib import Path
+import time
 from threading import RLock
 
 from fastapi import FastAPI, HTTPException, Header, status
@@ -48,29 +49,63 @@ logger = logging.getLogger(__name__)
 
 RATES_DIR = Path(os.environ.get("CURRENCY_DATA_DIR", "/srv/currency-data"))
 RELOAD_TOKEN = os.environ.get("RELOAD_TOKEN", "")
+RELOAD_CHECK_SECONDS = float(os.environ.get("RELOAD_CHECK_SECONDS", "60"))
 
 
 # ── In-memory service state ───────────────────────────────────────
 
 
 class _Holder:
-    """Wraps the singleton CurrencyService instance with a lock so
-    ``POST /v1/reload`` can replace the instance atomically while
-    the API keeps serving the previous one mid-request."""
+    """Wraps the singleton CurrencyService instance with a lock so a
+    reload can replace the instance atomically while the API keeps
+    serving the previous one mid-request.
+
+    It reloads by itself when the loader has written new rates: at most
+    every RELOAD_CHECK_SECONDS it compares the modification time of
+    metadata.json (which the loader writes last, on every run) and of the
+    rates directory with what it loaded. Before this the only reload path
+    was the loader's token-gated POST /v1/reload, and with no token
+    provisioned the API served the rates it read at start-up until the pod
+    restarted (two days stale in prod on 2026-09-30).
+    """
 
     def __init__(self) -> None:
         self._svc: CurrencyService | None = None
+        self._signature: tuple | None = None
+        self._checked_at = 0.0
         self._lock = RLock()
 
     def get(self) -> CurrencyService:
         with self._lock:
             if self._svc is None:
-                self._svc = CurrencyService.load(RATES_DIR)
+                self._load()
+            elif time.monotonic() - self._checked_at >= RELOAD_CHECK_SECONDS:
+                self._checked_at = time.monotonic()
+                if _data_signature() != self._signature:
+                    logger.info("rates changed on disk; reloading")
+                    self._load()
             return self._svc
 
     def reload(self) -> None:
         with self._lock:
-            self._svc = CurrencyService.load(RATES_DIR)
+            self._load()
+
+    def _load(self) -> None:
+        # Signature first: a write that lands while we load changes it
+        # again, and the next check picks that up.
+        self._signature = _data_signature()
+        self._checked_at = time.monotonic()
+        self._svc = CurrencyService.load(RATES_DIR)
+
+
+def _data_signature() -> tuple:
+    out = []
+    for path in (RATES_DIR / "metadata.json", RATES_DIR / "rates"):
+        try:
+            out.append(path.stat().st_mtime_ns)
+        except OSError:
+            out.append(None)
+    return tuple(out)
 
 
 _holder = _Holder()

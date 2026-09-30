@@ -48,3 +48,6 @@ jobs:
           cosign-key: ${{ secrets.COSIGN_KEY }}
           registry-user: ${{ secrets.REGISTRY_USER }}
           registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          # Distroless runtime, no pip: fail the build if a shell, package
+          # manager or pip comes back.
+          minimal-enforce: "true"

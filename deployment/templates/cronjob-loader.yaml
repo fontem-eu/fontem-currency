@@ -30,6 +30,10 @@ spec:
             component: cron
         spec:
           restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.runAsUser | default 999 }}
+            runAsGroup: {{ .Values.runAsUser | default 999 }}
           imagePullSecrets:
             - name: regcred
           volumes:
@@ -39,39 +43,15 @@ spec:
           containers:
             - name: loader
               image: contribute.void42.internal/fontem/fontem-currency:{{ .Values.version }}
-              command:
-                - sh
-                - -c
-                - |
-                  set -e
-                  python -m src.loader.load
-                  # Tell the running API to reload its in-memory rate
-                  # cache. Best-effort: a missed reload just delays
-                  # the new rates by one rollover (next pod restart),
-                  # so we don't fail the cron on a flake.
-                  if [ -n "${RELOAD_TOKEN:-}" ]; then
-                    curl -fsS -m 10 \
-                      -X POST \
-                      -H "X-Reload-Token: ${RELOAD_TOKEN}" \
-                      http://fontem-currency/v1/reload \
-                      || echo "reload ping failed (non-fatal)"
-                  fi
-                  # The linkerd sidecar does not exit when the loader finishes,
-                  # so the Job would hang until activeDeadlineSeconds and then
-                  # be marked Failed -- the real cause of the "failing" cron
-                  # (the loader itself exits 0). Tell the proxy to shut down so
-                  # the Job completes cleanly.
-                  curl -fsS -m 5 -X POST http://localhost:4191/shutdown \
-                    >/dev/null 2>&1 || true
+              # The API notices new rates on disk by itself (it re-checks
+              # metadata.json every RELOAD_CHECK_SECONDS), so the loader only
+              # loads: no reload ping, and no shell for one (the image has
+              # none). The old curl calls never ran either: the previous
+              # image had no curl.
+              command: ["python", "-m", "src.loader.load"]
               env:
                 - name: CURRENCY_DATA_DIR
                   value: /srv/currency-data
-                - name: RELOAD_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: fontem-currency-reload-token
-                      key: token
-                      optional: true
               volumeMounts:
                 - name: rates
                   mountPath: /srv/currency-data

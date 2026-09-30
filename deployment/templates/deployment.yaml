@@ -18,6 +18,13 @@ spec:
       labels:
         app: fontem-currency
     spec:
+      # The rates on NFS belong to uid/gid 999 (the previous image's
+      # appuser), and NFS ignores fsGroup; the distroless image runs under
+      # any uid.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.runAsUser | default 999 }}
+        runAsGroup: {{ .Values.runAsUser | default 999 }}
       imagePullSecrets:
         - name: regcred
       volumes:

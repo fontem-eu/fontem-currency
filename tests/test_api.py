@@ -111,3 +111,32 @@ def test_reload_succeeds_with_token(monkeypatch, tmp_path):
     client, _ = _client(monkeypatch, tmp_path)
     r = client.post("/v1/reload", headers={"X-Reload-Token": "test-token"})
     assert r.json() == {"ok": True}
+
+
+def _rewrite_usd(pvc: Path, rate: str) -> None:
+    """What a loader run leaves behind: new rate files, then metadata.json."""
+    (pvc / "rates" / "USD.json").write_text(json.dumps(
+        {"2000-01-03": "1.00", "2024-01-02": rate, _date.today().isoformat(): rate}))
+    (pvc / "metadata.json").write_text(json.dumps({"last_refreshed": "now"}))
+
+
+def test_new_rates_on_disk_are_served_without_a_reload_call(monkeypatch, tmp_path):
+    monkeypatch.setenv("RELOAD_CHECK_SECONDS", "0")
+    client, _ = _client(monkeypatch, tmp_path)
+    ask = {"value": "110", "currency": "USD", "on": "2024-01-02"}
+    assert client.post("/v1/convert", json=ask).json()["eur"] == "100.00"
+
+    _rewrite_usd(tmp_path, "2.20")
+
+    assert client.post("/v1/convert", json=ask).json()["eur"] == "50.00"
+
+
+def test_rates_on_disk_are_rechecked_only_once_per_interval(monkeypatch, tmp_path):
+    monkeypatch.setenv("RELOAD_CHECK_SECONDS", "3600")
+    client, _ = _client(monkeypatch, tmp_path)
+    ask = {"value": "110", "currency": "USD", "on": "2024-01-02"}
+    assert client.post("/v1/convert", json=ask).json()["eur"] == "100.00"
+
+    _rewrite_usd(tmp_path, "2.20")
+
+    assert client.post("/v1/convert", json=ask).json()["eur"] == "100.00"
