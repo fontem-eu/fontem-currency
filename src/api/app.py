@@ -24,10 +24,10 @@ Plus operational endpoints:
                               we have a rate for (lets consumers
                               flag stale data)
 
-The CurrencyService instance is constructed once at startup from
-the PVC the loader writes into. Re-load is a SIGHUP-like operation
-that the loader cronjob can trigger via ``POST /v1/reload`` after
-it finishes a refresh (token-gated; see the deployment manifest).
+The CurrencyService instance is built from the PVC the loader writes
+into, and rebuilt when the files there change (checked at most every
+RELOAD_CHECK_SECONDS, see _Holder). ``POST /v1/reload`` forces a
+rebuild (token-gated; see the deployment manifest).
 """
 from __future__ import annotations
 
