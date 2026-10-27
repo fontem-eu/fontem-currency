@@ -6,7 +6,7 @@
 # Dependencies come from pyproject.toml; this file used to pin its own older
 # versions (fastapi 0.118, uvicorn 0.37), so the image never ran what
 # pyproject declared.
-FROM cgr.void42.internal/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS build
+FROM cgr.void42.internal/chainguard/python:latest-dev@sha256:73d5f1df6f461d40afa3bc1d8481c85b0692e21839437c18dec0b28ee8e64213 AS build
 USER root
 ENV PIP_INDEX_URL=https://nexus.void42.internal/repository/pypi-proxy/simple/ \
     PIP_TRUSTED_HOST=nexus.void42.internal
