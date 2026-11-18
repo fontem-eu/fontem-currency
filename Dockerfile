@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir . \
  && pip uninstall -y pip \
  && mkdir -p /out/srv/currency-data
 
-FROM cgr.void42.internal/chainguard/python:latest@sha256:e5d8d4eb6975957350c8deb3afb09ea5328629d50a6916fc9863015fbfc0d8f8
+FROM cgr.void42.internal/chainguard/python:latest@sha256:d914788ef74519450a69bc5cce6a1cc747dbefb95a3d431daa4ff707767fea8a
 WORKDIR /app
 COPY --from=build /venv /venv
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
