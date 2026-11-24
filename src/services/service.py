@@ -286,6 +286,26 @@ class CurrencyService:
         eur = (value / rate).quantize(Decimal("0.01"))
         return ConversionResult(eur, rate, rate_date, source, ccy, scale)
 
+    def rates_between(
+        self, currency: str | None, start: date, end: date,
+    ) -> tuple[str | None, Decimal, dict[date, Decimal]]:
+        """(ISO currency, scale, {day: rate}) for every calendar day from
+        ``start`` to ``end``: the rate ``convert_detailed`` would use that
+        day (units of the currency per EUR; the last published rate up to
+        RATE_LOOKBACK_DAYS back, or the locked rate). Days without one are
+        left out; EUR is 1 every day. An amount x scale / rate is in EUR."""
+        ccy, scale = self.unit(currency)
+        if ccy is None:
+            return None, scale, {}
+        out: dict[date, Decimal] = {}
+        day = start
+        while day <= end:
+            rate = Decimal(1) if ccy == "EUR" else self._rate_on(ccy, day)[0]
+            if rate is not None:
+                out[day] = rate
+            day += timedelta(days=1)
+        return ccy, scale, out
+
     # ── Stats / introspection ─────────────────────────────────────
 
     def known_currencies(self) -> list[str]:

@@ -27,6 +27,7 @@ Currency reference + EUR conversion service. **Singleton — one deployment in t
 | `POST /v1/parse` | Sentinel detection |
 | `POST /v1/resolve` | Declared / country / date → effective currency |
 | `POST /v1/convert` | Value + currency + date → EUR |
+| `GET /v1/rates?currency=&start=&end=` | A currency's daily rates over a range (what `/v1/convert` uses each day) |
 | `GET /v1/coverage` | Per-currency earliest+latest date we have a rate for |
 | `GET /healthz` | Liveness (always 200 unless the python process is wedged) |
 | `GET /readyz` | Readiness (503 until the loader has populated the PVC at least once) |

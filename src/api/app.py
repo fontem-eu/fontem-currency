@@ -11,6 +11,9 @@ ETL, the API server) need:
                               (handles aliases, country defaults,
                               currency-history-on-date)
 * ``POST /v1/convert``      — value + currency + date → EUR
+* ``GET  /v1/rates``        — a currency's daily rates over a date range
+                              (what /v1/convert uses each day), to
+                              convert a whole series in one call
 
 Plus operational endpoints:
 
@@ -173,6 +176,26 @@ class ConvertResponse(BaseModel):
     )
 
 
+class RatesResponse(BaseModel):
+    currency: str | None = Field(
+        None, description="ISO 4217 currency the rates are for (GBP for GBp)",
+    )
+    scale: str = Field(
+        "1", description="What an amount in the asked code is multiplied by "
+                         "to be in ``currency`` (0.01 for GBp)",
+    )
+    rates: dict[str, str] = Field(
+        default_factory=dict,
+        description="Units of ``currency`` per EUR for each calendar day, as "
+                    "/v1/convert would use it (last published rate up to a "
+                    "week back); days without one are left out",
+    )
+
+
+#: Longest range /v1/rates answers in one call (about 20 years).
+MAX_RATE_DAYS = 7400
+
+
 class CoverageEntry(BaseModel):
     currency: str
     earliest: date_t | None
@@ -280,6 +303,22 @@ def convert(req: ConvertRequest) -> ConvertResponse:
         source=result.source,
         currency=result.currency,
         scale=str(result.scale),
+    )
+
+
+@app.get("/v1/rates", response_model=RatesResponse)
+def rates(currency: str, start: date_t, end: date_t) -> RatesResponse:
+    """Daily rates for a currency between two dates, inclusive: what
+    /v1/convert would use on each day, for converting a series in one call."""
+    if end < start or (end - start).days >= MAX_RATE_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"start must not be after end, and the range at most {MAX_RATE_DAYS} days",
+        )
+    ccy, scale, by_day = _holder.get().rates_between(currency, start, end)
+    return RatesResponse(
+        currency=ccy, scale=str(scale),
+        rates={day.isoformat(): str(rate) for day, rate in by_day.items()},
     )
 
 
