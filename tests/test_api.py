@@ -7,16 +7,18 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 
-def _seed_pvc(tmp_path: Path) -> Path:
+def _seed_pvc(tmp_path: Path, more: dict[str, dict[str, str]] | None = None) -> Path:
     rates = tmp_path / "rates"
     rates.mkdir()
     (rates / "USD.json").write_text(json.dumps(
         {"2000-01-03": "1.00", "2024-01-02": "1.10", _date.today().isoformat(): "1.10"}))
+    for ccy, daily in (more or {}).items():
+        (rates / f"{ccy}.json").write_text(json.dumps(daily))
     return tmp_path
 
 
-def _client(monkeypatch, tmp_path):
-    pvc = _seed_pvc(tmp_path)
+def _client(monkeypatch, tmp_path, more=None):
+    pvc = _seed_pvc(tmp_path, more)
     monkeypatch.setenv("CURRENCY_DATA_DIR", str(pvc))
     monkeypatch.setenv("RELOAD_TOKEN", "test-token")
     # Re-import so the env vars stick + the _holder is fresh.
@@ -76,7 +78,7 @@ def test_resolve_uses_country_default(monkeypatch, tmp_path):
     r = client.post("/v1/resolve", json={
         "declared": None, "country": "DEU", "on": "2024-01-15",
     })
-    assert r.json() == {"currency": "EUR", "inferred": True}
+    assert r.json() == {"currency": "EUR", "inferred": True, "scale": "1"}
 
 
 def test_convert_usd_to_eur(monkeypatch, tmp_path):
@@ -140,3 +142,24 @@ def test_rates_on_disk_are_rechecked_only_once_per_interval(monkeypatch, tmp_pat
     _rewrite_usd(tmp_path, "2.20")
 
     assert client.post("/v1/convert", json=ask).json()["eur"] == "100.00"
+
+
+GBP = {"GBP": {"2024-01-02": "0.85"}}
+
+
+def test_convert_reads_pence_as_pence(monkeypatch, tmp_path):
+    client, _ = _client(monkeypatch, tmp_path, GBP)
+    r = client.post("/v1/convert", json={
+        "value": "1234", "currency": "GBp", "on": "2024-01-02",
+    })
+    body = r.json()
+    assert body["eur"] == "14.52"
+    assert (body["currency"], body["scale"]) == ("GBP", "0.01")
+
+
+def test_resolve_names_the_iso_currency_and_its_scale(monkeypatch, tmp_path):
+    client, _ = _client(monkeypatch, tmp_path, GBP)
+    for declared, scale in (("GBp", "0.01"), ("GBP", "1"), ("ZAc", "0.01")):
+        r = client.post("/v1/resolve", json={"declared": declared})
+        assert r.json()["scale"] == scale, declared
+    assert client.post("/v1/resolve", json={"declared": "GBp"}).json()["currency"] == "GBP"

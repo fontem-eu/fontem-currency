@@ -141,6 +141,13 @@ class ResolveRequest(BaseModel):
 class ResolveResponse(BaseModel):
     currency: str | None
     inferred: bool
+    scale: str = Field(
+        "1",
+        description=(
+            "What an amount in the declared code is multiplied by to be "
+            "in ``currency``: 0.01 for GBp (pence), 1 for an ISO code."
+        ),
+    )
 
 
 class ConvertRequest(BaseModel):
@@ -156,6 +163,14 @@ class ConvertResponse(BaseModel):
     rate_used: str | None = None
     rate_date: date_t | None = None
     source: str
+    currency: str | None = Field(
+        None, description="ISO 4217 currency the rate is for (GBP for GBp)",
+    )
+    scale: str = Field(
+        "1",
+        description="What the value was multiplied by to be in ``currency`` "
+                    "(0.01 for a price in pence)",
+    )
 
 
 class CoverageEntry(BaseModel):
@@ -244,7 +259,8 @@ def parse(req: ParseRequest) -> ParseResponse:
 def resolve(req: ResolveRequest) -> ResolveResponse:
     svc = _holder.get()
     ccy, inferred = svc.resolve_currency(req.declared, req.country, req.on)
-    return ResolveResponse(currency=ccy, inferred=inferred)
+    scale = Decimal(1) if inferred else svc.unit(req.declared)[1]
+    return ResolveResponse(currency=ccy, inferred=inferred, scale=str(scale))
 
 
 @app.post("/v1/convert", response_model=ConvertResponse)
@@ -262,6 +278,8 @@ def convert(req: ConvertRequest) -> ConvertResponse:
         rate_used=None if result.rate_used is None else str(result.rate_used),
         rate_date=result.rate_date,
         source=result.source,
+        currency=result.currency,
+        scale=str(result.scale),
     )
 
 
