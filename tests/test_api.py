@@ -163,3 +163,35 @@ def test_resolve_names_the_iso_currency_and_its_scale(monkeypatch, tmp_path):
         r = client.post("/v1/resolve", json={"declared": declared})
         assert r.json()["scale"] == scale, declared
     assert client.post("/v1/resolve", json={"declared": "GBp"}).json()["currency"] == "GBP"
+
+
+def test_rates_give_each_day_what_convert_would_use(monkeypatch, tmp_path):
+    """Friday's rate carries over the weekend, as /v1/convert's does."""
+    client, _ = _client(monkeypatch, tmp_path, {"GBP": {"2024-01-05": "0.86",
+                                                        "2024-01-08": "0.87"}})
+    body = client.get("/v1/rates", params={
+        "currency": "GBp", "start": "2024-01-05", "end": "2024-01-08"}).json()
+    assert (body["currency"], body["scale"]) == ("GBP", "0.01")
+    assert body["rates"] == {"2024-01-05": "0.86", "2024-01-06": "0.86",
+                             "2024-01-07": "0.86", "2024-01-08": "0.87"}
+    convert = client.post("/v1/convert", json={
+        "value": "100", "currency": "GBP", "on": "2024-01-07"}).json()
+    assert convert["rate_used"] == body["rates"]["2024-01-07"]
+
+
+def test_rates_for_euros_are_one_and_unknown_codes_have_none(monkeypatch, tmp_path):
+    client, _ = _client(monkeypatch, tmp_path)
+    eur = client.get("/v1/rates", params={
+        "currency": "EUR", "start": "2024-01-01", "end": "2024-01-02"}).json()
+    assert eur["rates"] == {"2024-01-01": "1", "2024-01-02": "1"}
+    unknown = client.get("/v1/rates", params={
+        "currency": "XYZ", "start": "2024-01-01", "end": "2024-01-02"}).json()
+    assert unknown["rates"] == {}
+
+
+def test_rates_refuse_a_backwards_or_huge_range(monkeypatch, tmp_path):
+    client, _ = _client(monkeypatch, tmp_path)
+    assert client.get("/v1/rates", params={
+        "currency": "USD", "start": "2024-01-02", "end": "2024-01-01"}).status_code == 422
+    assert client.get("/v1/rates", params={
+        "currency": "USD", "start": "1990-01-01", "end": "2024-01-01"}).status_code == 422
