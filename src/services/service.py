@@ -6,6 +6,7 @@ A single source of truth for all currency operations in GMR:
 - Country -> currency history (Estonia: EEK until 2010, EUR after)
 - Locked/peg rates for currencies that became EUR
 - ISO alias resolution (USN -> USD, etc.)
+- Prices quoted in a minor unit (GBp, ZAc: see units.py)
 - Sentinel detection (-1, 0.01 -> "value undisclosed")
 - Decimal-precision arithmetic
 
@@ -23,6 +24,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_EVEN, getcontext
 from pathlib import Path
+
+from .units import MinorUnits
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,10 @@ class ConversionResult:
     rate_used: Decimal | None
     rate_date: date | None
     source: str  # 'ecb', 'locked', 'inferred', 'unknown'
+    # The ISO currency the rate is for, and what the value was multiplied
+    # by to be in it (0.01 for a price in pence).
+    currency: str | None = None
+    scale: Decimal = Decimal(1)
 
 
 class CurrencyService:
@@ -55,11 +62,14 @@ class CurrencyService:
         locked: dict[str, dict],
         country_history: dict[str, list[dict]],
         aliases: dict[str, str],
+        *,
+        minor_units: MinorUnits | None = None,
     ) -> None:
         self._rates = rates
         self._locked = locked
         self._country_history = country_history
         self._aliases = aliases
+        self._minor_units = minor_units or MinorUnits({}, {})
 
     @classmethod
     def load(cls, rates_dir: str | Path) -> "CurrencyService":
@@ -110,7 +120,8 @@ class CurrencyService:
             "%d countries, %d aliases",
             len(rates), len(locked), len(country_history), len(aliases),
         )
-        return cls(rates, locked, country_history, aliases)
+        return cls(rates, locked, country_history, aliases,
+                   minor_units=MinorUnits.load(data_dir))
 
     # ── Sentinel detection ────────────────────────────────────────
 
@@ -134,11 +145,22 @@ class CurrencyService:
     # ── Alias resolution ──────────────────────────────────────────
 
     def normalize_currency(self, ccy: str | None) -> str | None:
-        """Normalize a currency code: uppercase, resolve aliases."""
+        """Normalize a currency code: uppercase, resolve aliases. A
+        minor-unit code gives its ISO currency (GBp -> GBP); amounts in
+        it need ``unit``'s scale too."""
+        return self.unit(ccy)[0]
+
+    def unit(self, ccy: str | None) -> tuple[str | None, Decimal]:
+        """(ISO currency, scale) for a currency code: an amount x scale
+        is the amount in that currency. GBp -> ("GBP", 0.01); USD ->
+        ("USD", 1); None -> (None, 1)."""
         if not ccy:
-            return None
+            return None, Decimal(1)
+        minor = self._minor_units.lookup(ccy)
+        if minor:
+            return minor
         ccy = ccy.strip().upper()
-        return self._aliases.get(ccy, ccy)
+        return self._aliases.get(ccy, ccy), Decimal(1)
 
     # ── Country → currency lookup ─────────────────────────────────
 
@@ -246,12 +268,14 @@ class CurrencyService:
             except (ValueError, ArithmeticError):
                 return unknown
 
-        ccy = self.normalize_currency(currency)
+        ccy, scale = self.unit(currency)
         if ccy is None:
             return unknown
+        value = value * scale
         if ccy == "EUR":
             return ConversionResult(
                 value.quantize(Decimal("0.01")), Decimal("1"), on, "identity",
+                ccy, scale,
             )
         if on is None:
             return unknown
@@ -260,7 +284,7 @@ class CurrencyService:
         if rate is None:
             return unknown
         eur = (value / rate).quantize(Decimal("0.01"))
-        return ConversionResult(eur, rate, rate_date, source)
+        return ConversionResult(eur, rate, rate_date, source, ccy, scale)
 
     # ── Stats / introspection ─────────────────────────────────────
 

@@ -18,6 +18,7 @@ Currency reference + EUR conversion service. **Singleton — one deployment in t
 * Frankfurter as the fallback for currencies ECB doesn't carry (MDL, MKD, UAH, RSD, BAM, …).
 * In-process `CurrencyService` with sentinel detection (TED's `-1` / `0.01` are "value undisclosed"), currency-history lookups (Estonia: EEK before 2011-01-01, EUR after), locked-rate handling (DEM, FRF, etc. post-EUR), and ISO alias resolution.
 * HTTP surface so consumers call across the cluster instead of mounting a shared PVC.
+* Prices quoted in a minor unit: GBp / GBX (pence), ZAc (cents), ILA (agorot) convert through their ISO currency. `/v1/convert` and `/v1/resolve` return that `currency` and the `scale` applied (0.01 for pence). The codes are in `src/data/minor_unit_codes.json`; the factor is the currency's minor units in the ISO 4217 list, bundled verbatim as `src/data/iso4217-list-one.xml` from SIX, the ISO 4217 maintenance agency (https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml). To refresh it, download that file over the bundled one; its `Pblshd` date is logged at start-up.
 
 ## API
 
@@ -59,7 +60,9 @@ src/
   api/app.py            FastAPI surface
   loader/load.py        ECB + Frankfurter refresh, writes to PVC
   services/service.py   CurrencyService (in-memory rate cache)
-  data/                 Static reference: locked_rates, country_currencies, aliases
+  services/units.py     Minor-unit codes (GBp, ZAc, ...)
+  data/                 Static reference: locked_rates, country_currencies, aliases,
+                        minor_unit_codes, the ISO 4217 list
 tests/                  pytest, no network calls — fetchers are monkeypatched
 deployment/             Helm chart (Deployment + Service + PVC + CronJob)
 .gitea/workflows/ci.yml CI: pytest + pylint + build/sign/push

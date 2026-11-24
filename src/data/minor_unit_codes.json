@@ -1,0 +1,7 @@
+{
+  "_comment": "Codes market-data sources use for prices quoted in a currency's minor unit; none is ISO 4217. Each names the ISO currency it divides. How many minor units make one unit is NOT written here: it is that currency's CcyMnrUnts in iso4217-list-one.xml. GBp: Yahoo Finance, London (seen in the price fetcher's _index.yml). ZAc: Yahoo Finance, Johannesburg. ILA: Yahoo Finance, Tel Aviv. GBX: London Stock Exchange instrument lists.",
+  "GBp": "GBP",
+  "GBX": "GBP",
+  "ZAc": "ZAR",
+  "ILA": "ILS"
+}

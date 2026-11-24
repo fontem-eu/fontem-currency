@@ -23,7 +23,7 @@ where = ["."]
 include = ["src*"]
 
 [tool.setuptools.package-data]
-"src.data" = ["*.json"]
+"src.data" = ["*.json", "*.xml"]
 
 [tool.pylint."messages control"]
 disable = [
